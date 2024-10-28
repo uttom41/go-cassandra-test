@@ -3,12 +3,56 @@ package main
 import (
 	"fmt"
 	"net/http"
+
+ 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/prometheus/client_golang/prometheus"
 	"strconv"
 	"time"
+	 "runtime"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gocql/gocql"
 )
+
+var (
+    requestCount = prometheus.NewCounterVec(
+        prometheus.CounterOpts{
+            Name: "http_requests_total",
+            Help: "Total number of HTTP requests",
+        },
+        []string{"method"},
+    )
+
+	cpuUsage = prometheus.NewGauge(prometheus.GaugeOpts{
+        Name: "go_app_cpu_usage_percent",
+        Help: "CPU usage of the Go application as a percentage.",
+    })
+    memUsage = prometheus.NewGauge(prometheus.GaugeOpts{
+        Name: "go_app_memory_usage_bytes",
+        Help: "Memory usage of the Go application in bytes.",
+    })
+)
+
+func recordMetrics() {
+    go func() {
+        for {
+            var m runtime.MemStats
+            runtime.ReadMemStats(&m)
+            memUsage.Set(float64(m.Alloc))
+
+            // Calculate CPU usage (assuming this is a basic approximation)
+            cpuUsage.Set(float64(runtime.NumGoroutine())) // Replace with actual CPU metric if available
+
+            time.Sleep(2 * time.Second)
+        }
+    }()
+}
+
+
+func init() {
+    // Register the metrics
+    prometheus.MustRegister(requestCount)
+}
 
 type UserRole struct {
 	ID     string
@@ -66,6 +110,11 @@ type User struct {
 }
 
 func main() {
+
+	prometheus.MustRegister(cpuUsage)
+    prometheus.MustRegister(memUsage)
+
+    recordMetrics()
 	// Cluster configuration
 	cluster := gocql.NewCluster("127.0.0.1:9042") // Ensure correct port
 	cluster.Keyspace = "my_saas"                  // Your keyspace name
@@ -79,7 +128,10 @@ func main() {
 
 	router := gin.Default()
 
+	router.GET("/metrics", gin.WrapH(promhttp.Handler()))
+
 	router.GET("/", func(c *gin.Context) {
+		requestCount.WithLabelValues("GET").Inc()
 		var (
 			id       string
 			username string
@@ -204,6 +256,7 @@ func main() {
 	})
 
 	router.GET("/users", func(ctx *gin.Context) {
+		requestCount.WithLabelValues("GET").Inc()
 
 		limitStr := ctx.DefaultQuery("limit", "10")
 		limit, err := strconv.Atoi(limitStr)
@@ -268,7 +321,7 @@ func main() {
             value7, value8, value9, value10, value11, value12, value13, value14, value15, value16, value17, value18, 
             value19, value20, value21, value22, value23, value24, value25, value26, value27, value28, value29, 
             value30, value31, value32, value33, value34, value35, value36, value37, value38, value39, value40 
-            FROM users`)
+            FROM users LIMIT ?`, limit)
 
 		iter := query.Iter()
 
@@ -491,3 +544,5 @@ func main() {
 	// Start the server
 	router.Run(":8080")
 }
+
+
