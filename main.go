@@ -4,11 +4,12 @@ import (
 	"fmt"
 	"net/http"
 
- 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/prometheus/client_golang/prometheus"
+	"runtime"
 	"strconv"
 	"time"
-	 "runtime"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gocql/gocql"
@@ -116,6 +117,7 @@ func main() {
 
     recordMetrics()
 	// Cluster configuration
+	// cluster := gocql.NewCluster("172.17.0.2:9042") // for docker
 	cluster := gocql.NewCluster("127.0.0.1:9042") // Ensure correct port
 	cluster.Keyspace = "my_saas"                  // Your keyspace name
 
@@ -429,6 +431,9 @@ func main() {
 
 		var users []User
 
+		 batch := session.NewBatch(gocql.LoggedBatch) // Create a new batch query
+		 batchSize := 20 // Define the maximum batch size
+
 		for i := 0; i < count; i++ {
 			user := User{
 				ID:       fmt.Sprintf("user_%d", i+1),
@@ -477,68 +482,81 @@ func main() {
 				Value40:  fmt.Sprintf("Value40_%d", i+1),
 			}
 
-			if err := session.Query(
-    "INSERT INTO my_saas.users (id, email, password, username, value1, value10, value11, value12, value13, value14, value15, value16, value17, value18, value19, value2, value20, value21, value22, value23, value24, value25, value26, value27, value28, value29, value3, value30, value31, value32, value33, value34, value35, value36, value37, value38, value39, value4, value40, value5, value6, value7, value8, value9) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    user.ID,
-    user.Email,
-    user.Password,
-    user.Username,
-    user.Value1,
-    user.Value10,
-    user.Value11,
-    user.Value12,
-    user.Value13,
-    user.Value14,
-    user.Value15,
-    user.Value16,
-    user.Value17,
-    user.Value18,
-    user.Value19,
-    user.Value2,
-    user.Value20,
-    user.Value21,
-    user.Value22,
-    user.Value23,
-    user.Value24,
-    user.Value25,
-    user.Value26,
-    user.Value27,
-    user.Value28,
-    user.Value29,
-    user.Value3,
-    user.Value30,
-    user.Value31,
-    user.Value32,
-    user.Value33,
-    user.Value34,
-    user.Value35,
-    user.Value36,
-    user.Value37,
-    user.Value38,
-    user.Value39,
-    user.Value4,
-    user.Value40,
-    user.Value5,
-    user.Value6,
-    user.Value7,
-    user.Value8,
-    user.Value9,
-).Exec(); err != nil {
-    ctx.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Error inserting user: %v", err)})
-    return
-}
+			batch.Query(
+					"INSERT INTO my_saas.users (id, email, password, username, value1, value10, value11, value12, value13, value14, value15, value16, value17, value18, value19, value2, value20, value21, value22, value23, value24, value25, value26, value27, value28, value29, value3, value30, value31, value32, value33, value34, value35, value36, value37, value38, value39, value4, value40, value5, value6, value7, value8, value9) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+					user.ID,
+					user.Email,
+					user.Password,
+					user.Username,
+					user.Value1,
+					user.Value10,
+					user.Value11,
+					user.Value12,
+					user.Value13,
+					user.Value14,
+					user.Value15,
+					user.Value16,
+					user.Value17,
+					user.Value18,
+					user.Value19,
+					user.Value2,
+					user.Value20,
+					user.Value21,
+					user.Value22,
+					user.Value23,
+					user.Value24,
+					user.Value25,
+					user.Value26,
+					user.Value27,
+					user.Value28,
+					user.Value29,
+					user.Value3,
+					user.Value30,
+					user.Value31,
+					user.Value32,
+					user.Value33,
+					user.Value34,
+					user.Value35,
+					user.Value36,
+					user.Value37,
+					user.Value38,
+					user.Value39,
+					user.Value4,
+					user.Value40,
+					user.Value5,
+					user.Value6,
+					user.Value7,
+					user.Value8,
+					user.Value9,
+				)
 
 			users = append(users, user)
 
+			if (i+1)%batchSize == 0 {
+				if err := session.ExecuteBatch(batch); err != nil {
+					ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Batch insert failed", "details": err.Error()})
+					return
+				}
+				batch = session.NewBatch(gocql.LoggedBatch) // Create a new batch for the next set of users
+			}
+
 		}
 
-		duration := time.Since(startTime)
+		  // Execute any remaining users in the batch
+		  if len(users)%batchSize != 0 {
+			if err := session.ExecuteBatch(batch); err != nil {
+				ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Batch insert failed", "details": err.Error()})
+				return
+			}
+		}
 
-		// Return users in JSON format
-		ctx.JSON(http.StatusOK, gin.H{
-			"message":    fmt.Sprintf("%d users inserted successfully", count),
-			"time_taken": duration.Seconds(),
-		})
+			duration := time.Since(startTime)
+
+			// Return the inserted users and the time taken for the operation
+			ctx.JSON(http.StatusOK, gin.H{
+				"time_taken": duration.Seconds(),
+				"inserted_users": users,
+			})
 	})
 
 	// Start the server
