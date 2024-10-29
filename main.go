@@ -13,6 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gocql/gocql"
+	"github.com/google/uuid"
 )
 
 var (
@@ -430,13 +431,14 @@ func main() {
 		startTime := time.Now()
 
 		var users []User
+		 idString := uuid.New()
 
 		 batch := session.NewBatch(gocql.LoggedBatch) // Create a new batch query
 		 batchSize := 20 // Define the maximum batch size
 
 		for i := 0; i < count; i++ {
 			user := User{
-				ID:       fmt.Sprintf("user_%d", i+1),
+				ID:       fmt.Sprintf("%v", idString),
 				Username: fmt.Sprintf("User%d", i+1),
 				Email:    fmt.Sprintf("user%d@example.com", i+1),
 				Password: "securepassword",
